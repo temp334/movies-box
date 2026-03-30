@@ -52,9 +52,25 @@ const manifest = {
     version: "1.0.0",
     name: "MovieBox Stremio",
     description: "Converted from Cloudstream",
-    resources: ["stream"],
+
+    resources: ["stream", "catalog", "meta"],
+
     types: ["movie", "series"],
-    idPrefixes: ["tt"]
+
+    idPrefixes: ["tt"],
+
+    catalogs: [
+        {
+            type: "movie",
+            id: "moviebox-movies",
+            name: "MovieBox Movies"
+        },
+        {
+            type: "series",
+            id: "moviebox-series",
+            name: "MovieBox Series"
+        }
+    ]
 };
 
 const builder = new addonBuilder(manifest);
