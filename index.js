@@ -59,18 +59,7 @@ const manifest = {
 
     idPrefixes: ["tt"],
 
-    catalogs: [
-        {
-            type: "movie",
-            id: "moviebox-movies",
-            name: "MovieBox Movies"
-        },
-        {
-            type: "series",
-            id: "moviebox-series",
-            name: "MovieBox Series"
-        }
-    ]
+    catalogs: [ ]
 };
 
 const builder = new addonBuilder(manifest);
