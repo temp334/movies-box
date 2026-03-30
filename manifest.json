@@ -1,0 +1,9 @@
+{
+  "id": "moviebox.addon",
+  "version": "1.0.0",
+  "name": "MovieBox Stremio",
+  "description": "Converted from Cloudstream",
+  "resources": ["stream"],
+  "types": ["movie", "series"],
+  "idPrefixes": ["tt"]
+}
