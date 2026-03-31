@@ -190,6 +190,14 @@ builder.defineStreamHandler(async ({ id }) => {
 
 // ================= SERVER =================
 app.get("/manifest.json", (req, res) => res.json(manifest));
-app.use("/", builder.getInterface());
+const addonInterface = builder.getInterface();
+
+app.get("/manifest.json", (req, res) => res.json(manifest));
+
+app.get("/catalog/:type/:id.json", addonInterface);
+
+app.get("/meta/:type/:id.json", addonInterface);
+
+app.get("/stream/:type/:id.json", addonInterface);
 
 app.listen(PORT, () => console.log("🔥 GOD MODE RUNNING"));
