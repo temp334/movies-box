@@ -8,100 +8,188 @@ const PORT = process.env.PORT || 3000;
 
 const BASE_URL = "https://api3.aoneroom.com";
 
-// 🔐 Helpers
-function md5(input) {
-    return crypto.createHash("md5").update(input).digest("hex");
+// ================= HELPERS =================
+const md5 = (d) => crypto.createHash("md5").update(d).digest("hex");
+
+function generateToken() {
+    const t = Date.now().toString();
+    return `${t},${md5(t.split("").reverse().join(""))}`;
 }
 
-function reverseString(str) {
-    return str.split("").reverse().join("");
-}
-
-function generateXClientToken() {
-    const timestamp = Date.now().toString();
-    const reversed = reverseString(timestamp);
-    const hash = md5(reversed);
-    return `${timestamp},${hash}`;
-}
-
-function buildCanonicalString(method, url, body, timestamp) {
+function sign(method, url, body = "") {
+    const ts = Date.now();
     const path = new URL(url).pathname;
-    const bodyHash = body ? md5(body) : "";
-    const bodyLength = body ? body.length : "";
+    const canonical = `${method}\n\n\n${body.length || ""}\n${ts}\n${body ? md5(body) : ""}\n${path}`;
+    const key = Buffer.from("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==", "base64");
 
-    return `${method.toUpperCase()}\n\n\n${bodyLength}\n${timestamp}\n${bodyHash}\n${path}`;
+    const h = crypto.createHmac("md5", key);
+    h.update(canonical);
+    return `${ts}|2|${h.digest("base64")}`;
 }
 
-function generateSignature(method, url, body = "") {
-    const timestamp = Date.now();
-    const canonical = buildCanonicalString(method, url, body, timestamp);
-
-    const secret = Buffer.from("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==", "base64");
-
-    const hmac = crypto.createHmac("md5", secret);
-    hmac.update(canonical);
-
-    const signature = hmac.digest("base64");
-
-    return `${timestamp}|2|${signature}`;
+function headers(url, method = "GET", body = "") {
+    return {
+        "user-agent": "okhttp/4.9.0",
+        "content-type": "application/json",
+        "x-client-token": generateToken(),
+        "x-tr-signature": sign(method, url, body)
+    };
 }
 
-// 🎬 Stremio Addon
+// ================= MANIFEST =================
 const manifest = {
-    id: "moviebox.addon",
-    version: "1.0.0",
-    name: "MovieBox Stremio",
-    description: "Converted from Cloudstream",
+    id: "moviebox.god",
+    version: "3.0.0",
+    name: "MovieBox GOD",
+    description: "Ultimate Cloudstream Conversion",
 
     resources: ["stream", "catalog", "meta"],
-
     types: ["movie", "series"],
+    idPrefixes: ["mbx"],
 
-    idPrefixes: ["tt"],
-
-    catalogs: [ ]
+    catalogs: [
+        { type: "movie", id: "mbx_movies", name: "🔥 Movies" },
+        { type: "series", id: "mbx_series", name: "📺 Series" }
+    ]
 };
 
 const builder = new addonBuilder(manifest);
 
-// 🎥 STREAM HANDLER
-builder.defineStreamHandler(async ({ type, id }) => {
+// ================= CATALOG =================
+builder.defineCatalogHandler(async ({ type, extra }) => {
     try {
-        const subjectId = id.replace("tt", "");
+        // 🔍 SEARCH
+        if (extra?.search) {
+            const url = `${BASE_URL}/wefeed-mobile-bff/subject-api/search/v2`;
+            const body = JSON.stringify({ page: 1, perPage: 20, keyword: extra.search });
 
-        const url = `${BASE_URL}/wefeed-mobile-bff/subject-api/play-info?subjectId=${subjectId}&se=1&ep=1`;
+            const res = await fetch(url, {
+                method: "POST",
+                headers: headers(url, "POST", body),
+                body
+            });
 
-        const headers = {
-            "x-client-token": generateXClientToken(),
-            "x-tr-signature": generateSignature("GET", url),
-            "user-agent": "okhttp/4.9.0"
-        };
+            const j = await res.json();
 
-        const res = await fetch(url, { headers });
-        const json = await res.json();
+            let metas = [];
+            j?.data?.results?.forEach(r => {
+                r.subjects?.forEach(s => {
+                    metas.push({
+                        id: "mbx" + s.subjectId,
+                        type: s.subjectType === 2 ? "series" : "movie",
+                        name: s.title,
+                        poster: s.cover?.url
+                    });
+                });
+            });
 
-        const streams = json?.data?.streams || [];
+            return { metas };
+        }
+
+        // 🎬 HOMEPAGE
+        const url = `${BASE_URL}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=${type === "series" ? 2 : 1}&page=1&perPage=20`;
+
+        const res = await fetch(url, { headers: headers(url) });
+        const j = await res.json();
 
         return {
+            metas: (j?.data?.items || []).map(i => ({
+                id: "mbx" + i.subjectId,
+                type,
+                name: i.title,
+                poster: i.cover?.url
+            }))
+        };
+
+    } catch (e) {
+        return { metas: [] };
+    }
+});
+
+// ================= META =================
+builder.defineMetaHandler(async ({ id }) => {
+    try {
+        const sid = id.replace("mbx", "");
+        const url = `${BASE_URL}/wefeed-mobile-bff/subject-api/get?subjectId=${sid}`;
+
+        const res = await fetch(url, { headers: headers(url) });
+        const j = await res.json();
+        const d = j?.data;
+
+        if (!d) return { meta: null };
+
+        let videos = [];
+
+        // 📺 SERIES SUPPORT
+        if (d.subjectType === 2) {
+            const sUrl = `${BASE_URL}/wefeed-mobile-bff/subject-api/season-info?subjectId=${sid}`;
+            const sRes = await fetch(sUrl, { headers: headers(sUrl) });
+            const sJson = await sRes.json();
+
+            sJson?.data?.seasons?.forEach(season => {
+                for (let ep = 1; ep <= season.maxEp; ep++) {
+                    videos.push({
+                        id: `${id}:${season.se}:${ep}`,
+                        title: `S${season.se}E${ep}`,
+                        season: season.se,
+                        episode: ep
+                    });
+                }
+            });
+        }
+
+        return {
+            meta: {
+                id,
+                type: d.subjectType === 2 ? "series" : "movie",
+                name: d.title,
+                poster: d.cover?.url,
+                background: d.cover?.url,
+                description: d.description,
+                videos
+            }
+        };
+
+    } catch {
+        return { meta: null };
+    }
+});
+
+// ================= STREAM =================
+builder.defineStreamHandler(async ({ id }) => {
+    try {
+        let sid = id.replace("mbx", "");
+        let se = 1, ep = 1;
+
+        if (id.includes(":")) {
+            const parts = id.split(":");
+            sid = parts[0].replace("mbx", "");
+            se = parts[1];
+            ep = parts[2];
+        }
+
+        const url = `${BASE_URL}/wefeed-mobile-bff/subject-api/play-info?subjectId=${sid}&se=${se}&ep=${ep}`;
+
+        const res = await fetch(url, { headers: headers(url) });
+        const j = await res.json();
+
+        const streams = j?.data?.streams || [];
+
+        // 🌍 MULTI LANGUAGE LABEL
+        return {
             streams: streams.map(s => ({
-                title: "MovieBox",
+                title: `🌐 ${s.resolutions || "Auto"}`,
                 url: s.url
             }))
         };
 
-    } catch (err) {
-        console.log(err);
+    } catch {
         return { streams: [] };
     }
 });
 
-// 🌐 Express server
-app.get("/manifest.json", (req, res) => {
-    res.json(manifest);
-});
-
+// ================= SERVER =================
+app.get("/manifest.json", (req, res) => res.json(manifest));
 app.use("/", builder.getInterface());
 
-app.listen(PORT, () => {
-    console.log(`Addon running on ${PORT}`);
-});
+app.listen(PORT, () => console.log("🔥 GOD MODE RUNNING"));
